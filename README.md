@@ -77,6 +77,10 @@ docker compose down        # stop (keeps data)
 docker compose down -v     # stop and DELETE all data
 ```
 
+## Dashboard
+<img width="1917" height="1012" alt="Screenshot 2026-10-04 022655" src="https://github.com/user-attachments/assets/2dd49c7d-91b1-421e-85cb-45d56e822846" />
+
+
 ## Troubleshooting
 | Problem | Fix |
 |---|---|
