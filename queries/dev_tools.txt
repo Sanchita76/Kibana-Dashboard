@@ -1,0 +1,122 @@
+# Paste these into Kibana -> Dev Tools (http://localhost:5601/app/dev_tools#/console)
+# Put the cursor on a request and press Ctrl+Enter (Cmd+Enter on Mac) to run it.
+
+# ---- 0. Health & basics -------------------------------------------------------------
+GET _cluster/health
+GET shop-sales/_count
+GET shop-sales/_mapping
+GET shop-sales/_search?size=2
+
+# ---- 1. Full-text search (analyzed text field) --------------------------------------
+GET shop-sales/_search
+{ "size": 5, "query": { "match": { "product": "wireless earbuds" } } }
+
+# ---- 2. Exact match + range filters (bool query) ------------------------------------
+GET shop-sales/_search
+{
+  "size": 5,
+  "query": { "bool": {
+    "filter": [
+      { "term":  { "status": "delivered" } },
+      { "term":  { "country": "Germany" } },
+      { "range": { "total_amount": { "gt": 500 } } }
+    ]
+  } },
+  "sort": [ { "total_amount": "desc" } ]
+}
+
+# ---- 3. Must / should / must_not ----------------------------------------------------
+GET shop-sales/_search
+{
+  "size": 5,
+  "query": { "bool": {
+    "must":     [ { "match": { "product": "laptop monitor" } } ],
+    "should":   [ { "term": { "category": "Electronics" } } ],
+    "must_not": [ { "terms": { "status": ["cancelled", "returned"] } } ],
+    "minimum_should_match": 0
+  } }
+}
+
+# ---- 4. Date range (last 30 days) ---------------------------------------------------
+GET shop-sales/_search
+{ "size": 0, "track_total_hits": true,
+  "query": { "range": { "order_date": { "gte": "now-30d/d", "lte": "now" } } } }
+
+# ---- 5. Revenue by category (terms + sum + avg) -------------------------------------
+GET shop-sales/_search
+{
+  "size": 0,
+  "aggs": { "by_category": {
+    "terms": { "field": "category", "order": { "revenue": "desc" } },
+    "aggs": {
+      "revenue":   { "sum": { "field": "total_amount" } },
+      "avg_order": { "avg": { "field": "total_amount" } }
+    } } }
+}
+
+# ---- 6. Monthly revenue trend + cumulative + month-over-month change ----------------
+GET shop-sales/_search
+{
+  "size": 0,
+  "aggs": { "monthly": {
+    "date_histogram": { "field": "order_date", "calendar_interval": "month" },
+    "aggs": {
+      "revenue":    { "sum": { "field": "total_amount" } },
+      "cumulative": { "cumulative_sum": { "buckets_path": "revenue" } },
+      "mom_change": { "derivative": { "buckets_path": "revenue" } }
+    } } }
+}
+
+# ---- 7. Percentiles & stats ---------------------------------------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": {
+    "order_value_pcts": { "percentiles": { "field": "total_amount", "percents": [25, 50, 75, 90, 99] } },
+    "amount_stats":     { "stats": { "field": "total_amount" } } } }
+
+# ---- 8. Unique customers per country (cardinality) ----------------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "countries": { "terms": { "field": "country" },
+    "aggs": { "unique_customers": { "cardinality": { "field": "customer_id" } } } } } }
+
+# ---- 9. Best-selling product in each category (top_hits) ----------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "cats": { "terms": { "field": "category" }, "aggs": {
+    "best": { "terms": { "field": "product.keyword", "size": 1, "order": { "units": "desc" } },
+              "aggs": { "units": { "sum": { "field": "quantity" } } } } } } } }
+
+# ---- 10. Filters agg: return-rate vs cancel-rate ------------------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "status_buckets": { "filters": { "filters": {
+    "delivered": { "term": { "status": "delivered" } },
+    "returned":  { "term": { "status": "returned" } },
+    "cancelled": { "term": { "status": "cancelled" } } } } } } }
+
+# ---- 11. Heat-map style: orders by weekday x hour -----------------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "weekday": { "terms": { "script": {
+      "source": "doc['order_date'].value.dayOfWeekEnum.getDisplayName(java.time.format.TextStyle.SHORT, Locale.ROOT)" } },
+    "aggs": { "hour": { "histogram": { "script": "doc['order_date'].value.hour", "interval": 4 } } } } } }
+
+# ---- 12. Significant terms: what is unusual about cancelled orders? -----------------
+GET shop-sales/_search
+{ "size": 0, "query": { "term": { "status": "cancelled" } },
+  "aggs": { "unusual_categories": { "significant_terms": { "field": "category" } } } }
+
+# ---- 13. Multi-level: country > payment method > revenue ----------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "country": { "terms": { "field": "country", "size": 5 }, "aggs": {
+    "pay": { "terms": { "field": "payment_method" }, "aggs": { "rev": { "sum": { "field": "total_amount" } } } } } } } }
+
+# ---- 14. Bucket sort: top 5 customers by revenue ------------------------------------
+GET shop-sales/_search
+{ "size": 0, "aggs": { "cust": { "terms": { "field": "customer_id", "size": 1000 }, "aggs": {
+    "rev": { "sum": { "field": "total_amount" } },
+    "top5": { "bucket_sort": { "sort": [ { "rev": { "order": "desc" } } ], "size": 5 } } } } } }
+
+# ---- 15. ES|QL (new SQL-like pipe language, ES 8.11+) -------------------------------
+POST _query?format=txt
+{ "query": "FROM shop-sales | WHERE status == \"delivered\" | STATS revenue = SUM(total_amount), orders = COUNT(*) BY category | SORT revenue DESC | LIMIT 10" }
+
+# ---- 16. Classic SQL ----------------------------------------------------------------
+POST _sql?format=txt
+{ "query": "SELECT country, COUNT(*) AS orders, ROUND(SUM(total_amount),2) AS revenue FROM \"shop-sales\" GROUP BY country ORDER BY revenue DESC" }
